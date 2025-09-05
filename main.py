@@ -2,6 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from jose import jwt, JWTError
+from fastapi.openapi.utils import get_openapi
 import os
 
 app = FastAPI(title="Techra API")
@@ -77,3 +78,30 @@ def chat(req: ChatRequest, claims: dict = Depends(verify_token)):
     sources = ["manual.pdf", "service_log_2025-09-05.json"]
 
     return ChatResponse(answer=answer, sources=sources)
+
+
+# === Swagger/OpenAPI Auth-knapp ===
+def custom_openapi():
+    if app.openapi_schema:
+        return app.openapi_schema
+    openapi_schema = get_openapi(
+        title=app.title,
+        version="1.0.0",
+        description="API för Techra felsökning",
+        routes=app.routes,
+    )
+    openapi_schema["components"]["securitySchemes"] = {
+        "bearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+        }
+    }
+    for path in openapi_schema["paths"].values():
+        for method in path.values():
+            method["security"] = [{"bearerAuth": []}]
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
