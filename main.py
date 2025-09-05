@@ -1,5 +1,6 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from jose import jwt, JWTError
 import os
 
@@ -9,7 +10,7 @@ app = FastAPI(title="Techra API")
 TENANT_ID = os.getenv("AZURE_TENANT_ID")
 API_CLIENT_ID = os.getenv("AZURE_API_CLIENT_ID")
 
-# Grupp → Roll mapping (byt ut GUIDs mot riktiga Object IDs från Entra)
+# Grupp → Roll mapping (byt GUIDs mot riktiga Object IDs från Entra)
 GROUP_TO_ROLE = {
     "d5f7f6e7-380f-468d-9d0e-6a7c30fd3ef9": "app-techra-supervisor",
     "5dc860e3-600d-4332-9200-5cdc53e7242b": "app-techra-technician",
@@ -19,10 +20,10 @@ GROUP_TO_ROLE = {
 # Token verifiering
 security = HTTPBearer()
 
+
 def verify_token(credentials: HTTPAuthorizationCredentials):
     token = credentials.credentials
     try:
-        # Dekoda token (vi litar på Azure, så basic validering räcker här)
         claims = jwt.get_unverified_claims(token)
 
         # Kontrollera audience
@@ -34,6 +35,17 @@ def verify_token(credentials: HTTPAuthorizationCredentials):
         raise HTTPException(status_code=401, detail="Invalid token")
 
 
+# === MODELLER ===
+class ChatRequest(BaseModel):
+    question: str
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: list[str]
+
+
+# === ENDPOINTS ===
 @app.get("/")
 def root():
     return {"message": "🚀 Techra API is running!"}
@@ -43,10 +55,25 @@ def root():
 def get_me(claims: dict = Depends(verify_token)):
     tenant_id = claims.get("tid")
     groups = claims.get("groups", [])
-
     roles = [GROUP_TO_ROLE[g] for g in groups if g in GROUP_TO_ROLE]
 
     return {
         "tenant_id": tenant_id,
         "roles": roles,
     }
+
+
+@app.post("/chat", response_model=ChatResponse)
+def chat(req: ChatRequest, claims: dict = Depends(verify_token)):
+    """
+    Placeholder för felsökningschatten.
+    Just nu returneras ett demo-svar.
+    Senare kopplas detta mot Azure OpenAI + Search.
+    """
+    question = req.question
+
+    # Placeholder-svar
+    answer = f"Du frågade: '{question}'. Just nu kör vi demo-svar."
+    sources = ["manual.pdf", "service_log_2025-09-05.json"]
+
+    return ChatResponse(answer=answer, sources=sources)
