@@ -1,3 +1,34 @@
-node_modules
-dist
-.env
+# === Python cache & bytecode ===
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# === Virtual environments ===
+.venv/
+env/
+venv/
+ENV/
+*.env
+
+# === Editor & OS-filer ===
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# === Test & loggar ===
+*.log
+.coverage
+.pytest_cache/
+.tox/
+.mypy_cache/
+.dmypy.json
+
+# === Azure & byggartefakter ===
+*.zip
+*.tar
+local.settings.json
+
+# === Node (om du råkat installera) ===
+node_modules/
