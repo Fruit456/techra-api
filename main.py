@@ -1,17 +1,19 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Body
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from pydantic import BaseModel
 from jose import jwt, JWTError
-from fastapi.openapi.utils import get_openapi
 import os
+import httpx
 
 app = FastAPI(title="Techra API")
 
-# === ENV variabler (lägg i App Service) ===
+# === ENV variabler (lägg i Azure App Service → Konfig) ===
 TENANT_ID = os.getenv("AZURE_TENANT_ID")
 API_CLIENT_ID = os.getenv("AZURE_API_CLIENT_ID")
+AOAI_ENDPOINT = os.getenv("AOAI_ENDPOINT")        # ex: https://aoai-techra.openai.azure.com
+AOAI_KEY = os.getenv("AOAI_KEY")
+AOAI_DEPLOYMENT = os.getenv("AOAI_DEPLOYMENT")    # ex: gpt-4o-mini
 
-# Grupp → Roll mapping (byt GUIDs mot riktiga Object IDs från Entra)
+# Grupp → Roll mapping (byt ut GUIDs mot riktiga Object IDs från Entra)
 GROUP_TO_ROLE = {
     "d5f7f6e7-380f-468d-9d0e-6a7c30fd3ef9": "app-techra-supervisor",
     "5dc860e3-600d-4332-9200-5cdc53e7242b": "app-techra-technician",
@@ -20,7 +22,6 @@ GROUP_TO_ROLE = {
 
 # Token verifiering
 security = HTTPBearer()
-
 
 def verify_token(credentials: HTTPAuthorizationCredentials):
     token = credentials.credentials
@@ -35,18 +36,8 @@ def verify_token(credentials: HTTPAuthorizationCredentials):
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+# === Routes ===
 
-# === MODELLER ===
-class ChatRequest(BaseModel):
-    question: str
-
-
-class ChatResponse(BaseModel):
-    answer: str
-    sources: list[str]
-
-
-# === ENDPOINTS ===
 @app.get("/")
 def root():
     return {"message": "🚀 Techra API is running!"}
@@ -56,6 +47,7 @@ def root():
 def get_me(claims: dict = Depends(verify_token)):
     tenant_id = claims.get("tid")
     groups = claims.get("groups", [])
+
     roles = [GROUP_TO_ROLE[g] for g in groups if g in GROUP_TO_ROLE]
 
     return {
@@ -64,44 +56,41 @@ def get_me(claims: dict = Depends(verify_token)):
     }
 
 
-@app.post("/chat", response_model=ChatResponse)
-def chat(req: ChatRequest, claims: dict = Depends(verify_token)):
+@app.post("/chat")
+async def chat(
+    body: dict = Body(...),
+    claims: dict = Depends(verify_token)
+):
     """
-    Placeholder för felsökningschatten.
-    Just nu returneras ett demo-svar.
-    Senare kopplas detta mot Azure OpenAI + Search.
+    Enkel chatt-endpoint som skickar prompten till Azure OpenAI
     """
-    question = req.question
+    user_message = body.get("message")
+    if not user_message:
+        raise HTTPException(status_code=400, detail="Message is required")
 
-    # Placeholder-svar
-    answer = f"Du frågade: '{question}'. Just nu kör vi demo-svar."
-    sources = ["manual.pdf", "service_log_2025-09-05.json"]
-
-    return ChatResponse(answer=answer, sources=sources)
-
-
-# === Swagger/OpenAPI Auth-knapp ===
-def custom_openapi():
-    if app.openapi_schema:
-        return app.openapi_schema
-    openapi_schema = get_openapi(
-        title=app.title,
-        version="1.0.0",
-        description="API för Techra felsökning",
-        routes=app.routes,
-    )
-    openapi_schema["components"]["securitySchemes"] = {
-        "bearerAuth": {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": "JWT",
-        }
+    # Bygg AOAI request
+    url = f"{AOAI_ENDPOINT}/openai/deployments/{AOAI_DEPLOYMENT}/chat/completions?api-version=2024-05-01-preview"
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": AOAI_KEY,
     }
-    for path in openapi_schema["paths"].values():
-        for method in path.values():
-            method["security"] = [{"bearerAuth": []}]
-    app.openapi_schema = openapi_schema
-    return app.openapi_schema
+    payload = {
+        "messages": [
+            {"role": "system", "content": "Du är Techra AI och hjälper till med felsökning av tåg."},
+            {"role": "user", "content": user_message},
+        ],
+        "max_tokens": 500,
+    }
 
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.post(url, headers=headers, json=payload)
+        if r.status_code != 200:
+            raise HTTPException(status_code=500, detail=f"AOAI error: {r.text}")
+        data = r.json()
 
-app.openapi = custom_openapi
+    reply = data["choices"][0]["message"]["content"]
+
+    return {
+        "user": user_message,
+        "reply": reply,
+    }
